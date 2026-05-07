@@ -1,0 +1,72 @@
+[app]
+name = "mealie"
+version = "0.1.0"
+description = "Mealie (self-hosted recipe manager / meal planner) packaged for OpenHost with one-click SSO. The zone owner is auto-logged-in to the admin UI without ever seeing Mealie's native login form. Public recipe-share links remain reachable by anonymous visitors."
+authors = ["Andrew Laack <andrew@laack.co>"]
+
+[runtime.container]
+image = "Dockerfile"
+# Auth-proxy port. Mealie itself runs on 127.0.0.1:9000; the proxy
+# listens on 8080 and is what the OpenHost router forwards to.
+port = 8080
+
+[routing]
+# The auth-proxy serves a static 200 on /_healthz so OpenHost's
+# liveness probe doesn't fight Mealie's cold-start / migrations.
+health_check = "/_healthz"
+# Public paths the OpenHost router lets through without zone_auth.
+# These MUST mirror the auth-proxy's PUBLIC_PATH_PREFIXES list.
+#
+# Categories:
+#   /g/                          — group-scoped pages. Mealie has two
+#                                  FastAPI handlers under this prefix
+#                                  that serve public content
+#                                  (``/g/{slug}/r/{recipe}`` falls
+#                                  through to a public-only handler,
+#                                  and ``/g/{slug}/shared/r/{token}``
+#                                  is unconditionally public). Other
+#                                  ``/g/...`` paths fall through to the
+#                                  Nuxt SPA static index which renders
+#                                  an auth-gated client-side page. We
+#                                  use the broad ``/g/`` prefix here
+#                                  because public_paths is a simple
+#                                  string-prefix matcher; narrowing
+#                                  to specific subroutes is not
+#                                  supported.
+#   /explore/                    — public group exploration
+#   /api/explore/                — public-explore JSON API
+#   /api/recipes/shared/         — share-token JSON API
+#   /api/app/about               — anonymous "about" data
+#   /api/media/                  — recipe images (referenced by public pages)
+#   /_nuxt/, /assets/, /icons/, /favicon.ico, /manifest.webmanifest — static
+public_paths = [
+    "/g/",
+    "/explore/",
+    "/api/explore/",
+    "/api/recipes/shared/",
+    "/api/app/about",
+    "/api/media/",
+    "/_nuxt/",
+    "/assets/",
+    "/icons/",
+    "/favicon.ico",
+    "/manifest.webmanifest",
+    "/_healthz",
+]
+
+[resources]
+# Mealie is FastAPI + Nuxt SPA. The python venv + nltk data + sqlite
+# fit in 512 MiB but image-thumbnailing peaks higher. 1 GiB leaves
+# headroom for recipe imports.
+memory_mb = 1024
+cpu_millicores = 1000
+
+[data]
+# Persistent state under /data/app_data/mealie/:
+#   * data/                 — Mealie's $MEALIE_HOME/data dir
+#                             (sqlite db, recipe images, backups).
+#   * admin-credentials.txt — generated owner password the
+#                             auth-proxy uses for auto-login
+#                             (mode 0600).
+app_data = true
+app_temp_data = true
