@@ -42,11 +42,17 @@ health_check = "/_healthz"
 public_paths = [
     "/g/",
     "/explore/",
-    "/api/auth/",
-    "/api/explore/",
-    "/api/recipes/shared/",
-    "/api/app/about",
-    "/api/media/",
+    # The whole /api/ tree is exposed unauthenticated through the
+    # OpenHost router. Mealie's REST API is consumed by mobile apps,
+    # the recipe-import bookmarklet, n8n integrations, and the
+    # browser SPA itself. Each /api/ endpoint enforces its own JWT
+    # auth via FastAPI dependencies (see
+    # mealie/core/dependencies/dependencies.py:get_current_user) —
+    # the proxy just gets out of the way. Public endpoints
+    # (/api/explore/, /api/recipes/shared/, /api/app/about,
+    # /api/media/, /api/auth/token) work for anonymous visitors;
+    # everything else requires a valid mealie Bearer JWT.
+    "/api/",
     "/_nuxt/",
     "/assets/",
     "/icons/",

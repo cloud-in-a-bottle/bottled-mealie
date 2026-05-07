@@ -77,12 +77,18 @@ The auth-proxy ALWAYS strips client-supplied `X-OpenHost-Is-Owner` and
 The following path prefixes are allowed through the OpenHost router without
 zone_auth, and the auth-proxy does NOT auto-login on them:
 
-- `/g/<group>/r/<slug>` — public recipe pages (recipe.settings.public must be
-  set in Mealie's UI).
-- `/g/<group>/shared/r/<token>` — share-link recipe pages.
-- `/explore/`, `/api/explore/` — public group exploration UI + JSON.
-- `/api/recipes/shared/` — share-token JSON API.
-- `/api/app/about`, `/api/media/` — anonymous about info + recipe images.
+- `/g/` — group-scoped pages: public recipes (`/g/<group>/r/<slug>` when
+  `recipe.settings.public` is set), share-token pages
+  (`/g/<group>/shared/r/<token>`), and SPA-rendered fallthroughs that the
+  Nuxt frontend gates client-side.
+- `/explore/` — public group-exploration UI.
+- `/api/` — the entire mealie REST API. Each endpoint enforces its own JWT
+  auth, so this layer is just "let the request through to mealie and let
+  mealie decide". Mobile clients, the recipe-import bookmarklet, n8n
+  integrations, and the SPA itself all depend on this. Public
+  (anonymous-allowed) endpoints inside `/api/` are `/api/auth/token`,
+  `/api/explore/...`, `/api/recipes/shared/...`, `/api/app/about`, and
+  `/api/media/...`.
 - `/_nuxt/`, `/assets/`, `/icons/`, `/favicon.ico`, `/manifest.webmanifest`,
   `/_healthz` — static SPA assets and proxy health probe.
 

@@ -134,15 +134,16 @@ ALWAYS_STRIP_HEADERS = frozenset(
 PUBLIC_PATH_PREFIXES = (
     "/g/",
     "/explore/",
-    # /api/auth/* lets mobile clients and integrations get a Bearer
-    # token without going through OpenHost zone_auth. Once they have
-    # a token they hit the rest of /api/* (also handled here as
-    # auto-login-bypassed) with the Authorization header.
-    "/api/auth/",
-    "/api/explore/",
-    "/api/recipes/shared/",
-    "/api/app/about",
-    "/api/media/",
+    # The entire /api/ tree is "public" at the OpenHost router
+    # level — mealie's API endpoints each enforce their own JWT
+    # auth (see mealie/core/dependencies/dependencies.py
+    # ``get_current_user``), so requiring zone_auth on top would
+    # break mobile clients / the recipe-import bookmarklet / etc.
+    # This auth-proxy still skips the auto-login bounce for /api/
+    # via the explicit ``is_api_path`` check in ``_dispatch`` so
+    # API clients carrying a Bearer JWT never see a 302+Set-Cookie
+    # surprise.
+    "/api/",
     "/_nuxt/",
     "/assets/",
     "/icons/",
