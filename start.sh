@@ -32,17 +32,15 @@ mkdir -p "$DATA_DIR"
 # the upstream entry.sh re-execs as abc.
 chown -R 911:911 "$DATA_DIR" "$PERSIST" 2>/dev/null || true
 
-# Wire mealie's expected data path to the persistent dir. Mealie reads
-# /app/data; the upstream image declares it as a VOLUME. We replace
-# the directory with a symlink so persistence survives container
-# restarts even though the image declares /app/data a volume (because
-# OpenHost doesn't honour Dockerfile VOLUMEs, the path stays a regular
-# directory at runtime).
-if [ -d /app/data ] && [ ! -L /app/data ]; then
-    rm -rf /app/data
-fi
-ln -snf "$DATA_DIR" /app/data
-chown -h 911:911 /app/data 2>/dev/null || true
+# Point mealie at our persistent directory instead of the image's
+# default /app/data. The upstream image marks /app/data as a VOLUME
+# and pre-populates it with empty subdirs, so we can't reliably
+# rm/symlink it from inside an unprivileged container. Mealie
+# respects the DATA_DIR env var (see mealie/core/config.py:21,
+# determine_data_dir()) and uses it as the root for sqlite + recipe
+# images + .secret + backups. Setting it here keeps state outside
+# /app and on the OpenHost-bind-mounted persistent dir.
+export DATA_DIR="$DATA_DIR"
 
 # Emit the public BASE_URL so mealie generates correct OG tags / share
 # links. The OpenHost router serves us at https://<app>.<zone>/.
