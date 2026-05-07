@@ -115,22 +115,32 @@ ALWAYS_STRIP_HEADERS = frozenset(
 #                              ``/g/...`` paths fall through to the
 #                              Nuxt SPA static index, which then
 #                              renders an auth-gated client-side
-#                              page. So anonymous traffic on a
-#                              non-public ``/g/...`` URL gets the
-#                              SPA's "log in" view rather than the
-#                              data behind it. We deliberately use
-#                              the broad ``/g/`` prefix here because
-#                              OpenHost's public_paths matcher is a
-#                              simple string-prefix check; narrower
-#                              regex matching isn't supported.
-#   /explore/                 — public group exploration UI
-#   /api/explore/             — public-explore JSON API
-#   /api/recipes/shared/      — share-token JSON API
-#   /api/app/about            — anonymous "about" data the SPA polls
-#   /api/media/               — recipe images referenced by public pages
+#                              page. We deliberately use the broad
+#                              ``/g/`` prefix because OpenHost's
+#                              public_paths matcher is a simple
+#                              string-prefix check; narrower regex
+#                              matching isn't supported.
+#   /explore/                 — public group-exploration UI.
+#   /api/                     — the entire mealie REST API. Mealie
+#                              enforces its own JWT auth on every
+#                              endpoint via the FastAPI
+#                              ``get_current_user`` dependency
+#                              (mealie/core/dependencies/dependencies.py:88),
+#                              so layering OpenHost zone_auth on top
+#                              would just lock out mobile / n8n /
+#                              bookmarklet clients that already
+#                              carry a valid Bearer JWT. The proxy
+#                              gets out of the way and lets mealie
+#                              decide. Anonymous-allowed endpoints
+#                              inside /api/ — /api/auth/token,
+#                              /api/explore/, /api/recipes/shared/,
+#                              /api/app/about, /api/media/ — work
+#                              because mealie marks them public;
+#                              everything else returns 401 to
+#                              anonymous callers.
 #   /_nuxt/, /assets/, /icons/, /favicon.ico, /manifest.webmanifest
-#                             — static assets the SPA loads
-#   /_healthz                 — proxy-served liveness probe (200)
+#                             — static assets the SPA loads.
+#   /_healthz                 — proxy-served liveness probe (200).
 PUBLIC_PATH_PREFIXES = (
     "/g/",
     "/explore/",
