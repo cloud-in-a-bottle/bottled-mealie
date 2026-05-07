@@ -42,6 +42,7 @@ health_check = "/_healthz"
 public_paths = [
     "/g/",
     "/explore/",
+    "/api/auth/",
     "/api/explore/",
     "/api/recipes/shared/",
     "/api/app/about",

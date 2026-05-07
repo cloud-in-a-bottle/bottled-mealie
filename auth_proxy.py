@@ -134,6 +134,11 @@ ALWAYS_STRIP_HEADERS = frozenset(
 PUBLIC_PATH_PREFIXES = (
     "/g/",
     "/explore/",
+    # /api/auth/* lets mobile clients and integrations get a Bearer
+    # token without going through OpenHost zone_auth. Once they have
+    # a token they hit the rest of /api/* (also handled here as
+    # auto-login-bypassed) with the Authorization header.
+    "/api/auth/",
     "/api/explore/",
     "/api/recipes/shared/",
     "/api/app/about",
