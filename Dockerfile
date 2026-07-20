@@ -15,13 +15,13 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # OIDC bridge in its own isolated venv (never touches Mealie's deps).
+# Copy the package into /opt/oidc_bridge so it imports as `oidc_bridge.server`
+# with /opt on the module search path.
 COPY oidc_bridge /opt/oidc_bridge
 RUN python3 -m venv /opt/oidc_bridge/.venv \
     && /opt/oidc_bridge/.venv/bin/pip install --no-cache-dir \
         starlette uvicorn "authlib>=1.3" python-multipart cryptography
-# The bridge is imported as `oidc_bridge.server`; the package dir lives at
-# /opt/oidc_bridge/oidc_bridge, so add the parent to the module search path.
-ENV PYTHONPATH=/opt/oidc_bridge
+ENV PYTHONPATH=/opt
 
 COPY nginx.conf.template /etc/nginx/nginx.conf.template
 COPY start.sh /usr/local/bin/start.sh
