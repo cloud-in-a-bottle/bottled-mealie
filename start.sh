@@ -19,16 +19,15 @@ PUBLIC_URL="https://${PUBLIC_HOST}"
 echo "[start] public URL: ${PUBLIC_URL}"
 
 # --- Persistent data dir --------------------------------------------------
-# Mealie stores its SQLite db + images under /app/data. Point that at the
+# Mealie stores its SQLite db + images under a data dir. The upstream image
+# marks /app/data as a VOLUME (auto-mounted by podman), so we can't repoint
+# that path. Instead, Mealie honours the DATA_DIR env var in production
+# (mealie/core/config.py determine_data_dir()), so point it straight at the
 # OpenHost persistent mount and make it writable by Mealie's runtime user
 # (uid/gid 911, user 'abc' in the upstream image).
 mkdir -p "${DATA_DIR}"
-if [ "${DATA_DIR}" != "/app/data" ]; then
-    # Ensure Mealie's fixed /app/data path resolves to the persistent mount.
-    rm -rf /app/data
-    ln -s "${DATA_DIR}" /app/data
-fi
 chown -R 911:911 "${DATA_DIR}" 2>/dev/null || true
+export DATA_DIR="${DATA_DIR}"
 
 # --- OIDC bridge config ---------------------------------------------------
 # A stable client secret shared between Mealie and the bridge. Generated once
