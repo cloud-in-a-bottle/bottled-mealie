@@ -1,0 +1,69 @@
+worker_processes 1;
+error_log /dev/stderr warn;
+pid /tmp/nginx.pid;
+
+events { worker_connections 1024; }
+
+http {
+    access_log off;
+    # Writable temp paths (container may run us as an unprivileged user).
+    client_body_temp_path /tmp/nginx-client-body;
+    proxy_temp_path       /tmp/nginx-proxy;
+    fastcgi_temp_path     /tmp/nginx-fastcgi;
+    uwsgi_temp_path       /tmp/nginx-uwsgi;
+    scgi_temp_path        /tmp/nginx-scgi;
+
+    # Allow large recipe-image uploads.
+    client_max_body_size 100m;
+
+    upstream mealie { server 127.0.0.1:9000; }
+    upstream oidc_bridge { server 127.0.0.1:9100; }
+
+    server {
+        listen 8080;
+
+        # The OpenHost router terminates TLS and forwards the original Host in
+        # X-Forwarded-Host; use it so Mealie/OIDC build correct absolute URLs.
+        # $HOST_PLACEHOLDER is substituted at boot with the app's public host.
+
+        # Static, unauthenticated health endpoint so OpenHost's healthcheck
+        # never sees a 5xx during Mealie's (slow) cold-start migrations.
+        location = /_healthz {
+            return 200 "ok\n";
+            default_type text/plain;
+        }
+
+        # In-container OIDC identity provider.
+        location /_oidc/ {
+            proxy_pass http://oidc_bridge;
+            proxy_set_header Host $host;
+            proxy_set_header X-OpenHost-Is-Owner $http_x_openhost_is_owner;
+            proxy_set_header X-Real-IP $remote_addr;
+        }
+
+        # Everything else -> Mealie.
+        location / {
+            proxy_pass http://mealie;
+            proxy_http_version 1.1;
+
+            # Preserve the public origin so Mealie's OIDC redirect URI and
+            # notification links are correct, and so it knows it's on https.
+            proxy_set_header Host $http_x_forwarded_host;
+            proxy_set_header X-Forwarded-Host $http_x_forwarded_host;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Real-IP $remote_addr;
+
+            # WebSocket support (Mealie uses it for some live features).
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+
+            proxy_read_timeout 300s;
+        }
+    }
+
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        ''      close;
+    }
+}
