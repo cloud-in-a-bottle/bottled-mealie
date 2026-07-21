@@ -66,6 +66,7 @@ import http.client
 import json
 import logging
 import os
+import re
 import secrets
 import string
 import sys
