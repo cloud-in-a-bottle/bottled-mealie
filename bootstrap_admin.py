@@ -138,32 +138,42 @@ DEFAULT_PASSWORD = "MyPassword"
 # same identity the OpenHost dashboard shows.
 DEFAULT_OWNER_USERNAME = "owner"
 
-# Local-part of an email address per RFC 5321/5322 dot-atom, plus the
-# characters Mealie's own validator tolerates. We only use this to
-# decide whether the owner username is safe to drop verbatim into the
-# left-hand side of an email; anything outside it gets sanitised.
-_EMAIL_LOCALPART_RE = re.compile(r"^[A-Za-z0-9._%+-]+$")
+# What we accept as-is for the owner identity: the character class the
+# OpenHost platform itself constrains owner usernames to
+# (compute_space core.auth.auth ``^[a-z0-9][a-z0-9._-]{0,29}$``), which
+# is also a valid email local-part. If OPENHOST_OWNER_USERNAME contains
+# anything outside this (it never should, since the platform validates
+# it, but env vars are ultimately untrusted input) we fall back to the
+# safe default rather than risk a Mealie username that looks odd or an
+# email address Mealie's validator would reject — either of which would
+# fail the relabel and leave is_first_login true.
+_SAFE_OWNER_IDENTITY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def _owner_username() -> str:
-    """The OpenHost owner's username, used as Mealie's username + name.
+    """The owner identity used for BOTH the Mealie username/full name and
+    the local-part of the admin email.
 
     OpenHost injects ``OPENHOST_OWNER_USERNAME`` into every app container
     (see compute_space core/data.py:provision_data). It's the name the
     owner picked on the claim/setup page (falling back to the platform
-    default ``owner`` when they left it blank). We reuse it verbatim as
-    the Mealie admin's username and full name so the owner sees a
-    familiar identity instead of the seeded "Change Me" / "admin".
+    default ``owner`` when they left it blank). We reuse it as the Mealie
+    admin's username and full name so the owner sees a familiar identity
+    instead of the seeded "Change Me" / "admin".
 
-    Sanitised to what Mealie's username field accepts: we strip
-    whitespace and, defensively, fall back to the platform default if
-    the value is empty. We do NOT lowercase it — Mealie usernames are
-    case-preserving — but the platform already constrains owner
-    usernames to ``^[a-z0-9][a-z0-9._-]{0,29}$`` so this is normally a
-    no-op.
+    We strip whitespace and fall back to ``owner`` when the value is
+    empty OR contains characters outside the safe set (see
+    ``_SAFE_OWNER_IDENTITY_RE``). Using one sanitised value for the
+    username, the full name, and the email local-part guarantees the
+    three always agree and are always valid — so the self-relabel PUT
+    never 422s on a malformed username or email. We do NOT lowercase it;
+    Mealie usernames are case-preserving and the platform already
+    lowercases owner usernames upstream.
     """
     raw = os.environ.get("OPENHOST_OWNER_USERNAME", "").strip()
-    return raw or DEFAULT_OWNER_USERNAME
+    if not raw or not _SAFE_OWNER_IDENTITY_RE.match(raw):
+        return DEFAULT_OWNER_USERNAME
+    return raw
 
 
 def _owner_email() -> str:
@@ -181,23 +191,19 @@ def _owner_email() -> str:
     admin's email flips ``is_first_login`` to false and the owner lands
     straight on their group home page.
 
-    We build the address as ``<owner-username>@<zone>`` so it matches
-    the identity the owner picked on the OpenHost setup page (e.g.
+    We build the address as ``<owner-username>@<zone>`` (using the same
+    sanitised owner identity as ``_owner_username``) so it matches the
+    identity the owner picked on the OpenHost setup page (e.g.
     ``andrew@andrew-2.selfhost.imbue.com``). The auth-proxy reads the
     persisted email from the credentials file, so this value is the
     single source of truth for both auto-login and manual login.
 
-    If the owner username somehow contains characters that aren't valid
-    in an email local-part, we fall back to the safe ``owner`` local
-    part rather than mint an address Mealie's validator would reject
-    (which would fail the relabel and leave is_first_login true). If the
-    zone domain is missing we fall back to a syntactically-valid
+    If the zone domain is missing we fall back to a syntactically-valid
     sentinel domain so the address is still well-formed.
     """
     zone = os.environ.get("OPENHOST_ZONE_DOMAIN", "").strip().lower()
+    # _owner_username() is already sanitised to a safe email local-part.
     local = _owner_username()
-    if not _EMAIL_LOCALPART_RE.match(local):
-        local = DEFAULT_OWNER_USERNAME
     if zone:
         return f"{local}@{zone}"
     return f"{local}@openhost.local"
