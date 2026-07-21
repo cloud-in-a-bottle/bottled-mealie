@@ -12,11 +12,27 @@ window:
   2. Login with the defaults to obtain a JWT.
   3. Generate a fresh 32-char password.
   4. PUT ``/api/users/password`` to rotate the admin's password.
-  5. PUT ``/api/users/{id}`` to keep the user labelled "Owner" / "admin"
-     while keeping the email unchanged so the auth-proxy's stored
-     credentials line up with what the user types if they ever need
-     to manually login. (Cosmetic; failure here is not fatal.)
-  6. Persist the rotated credentials to ``admin-credentials.txt``
+  5. PUT ``/api/users/{id}`` to relabel the user as "Owner" / "admin"
+     AND move its email off the seeded ``changeme@example.com``
+     address to a per-zone ``owner@<zone>`` value. This email change is
+     load-bearing, not cosmetic: Mealie reports ``is_first_login=True``
+     for as long as a user with the seeded email exists
+     (mealie/routes/app/app_about.py:get_startup_info), and while that
+     flag is true the SPA bounces an admin into the ``/admin/setup``
+     first-time-setup wizard on every login (index.vue:41,
+     login.vue:266). That wizard — which talks about changing the
+     password — is the "loading screen" an OpenHost owner otherwise
+     sees on each SSO login. Moving the email flips the flag to false.
+     The auth-proxy reads the (new) email from the persisted
+     credentials file, so auto-login and manual login stay in sync. If
+     the relabel fails we fall back to the seeded email so login still
+     works (the owner just keeps seeing the setup wizard).
+  6. Enable public group + household sharing ONCE so "publish a recipe
+     and copy the link" works for anonymous visitors. Mealie seeds the
+     default group/household as private, which makes public-recipe
+     links dead-ends. Gated by a one-shot marker file so a later
+     operator choice to re-privatise is never reverted on restart.
+  7. Persist the rotated credentials to ``admin-credentials.txt``
      under ``$OPENHOST_APP_DATA_DIR``, mode 0600.
 
 Note: open self-signup is disabled separately via the
@@ -26,9 +42,12 @@ Note: open self-signup is disabled separately via the
 admin-API call here; the env var is the single source of truth.
 
 If the file already exists (re-deploy / restart), we verify the
-persisted credentials still log in. If they don't (e.g. the password
-was rotated in the UI), we leave the file in place and exit; the
-operator will see Mealie's normal login form.
+persisted credentials still log in. If they do, we additionally run a
+one-shot migration for deploys bootstrapped by an older revision of
+this script (relabel the seeded email if still present, enable public
+sharing once). If they don't (e.g. the password was rotated in the
+UI), we leave the file in place and exit; the operator will see
+Mealie's normal login form.
 
 Idempotent and best-effort. Any failure path leaves mealie in a
 working but non-SSO state rather than crashing the container.
@@ -85,6 +104,17 @@ CRED_FILE = os.environ.get(
     "BOOTSTRAP_CRED_FILE", "/data/app_data/mealie/admin-credentials.txt"
 )
 
+# One-shot marker recording that the public-sharing enable + email
+# relabel migration has run. Placed next to the credentials file. Its
+# presence means "do not touch group/household privacy again" so an
+# operator who later re-privatises their group in the UI is never
+# reverted on the next container restart. This is NOT a secret — it's
+# an empty sentinel file.
+MIGRATION_MARKER_FILE = os.environ.get(
+    "BOOTSTRAP_MIGRATION_MARKER",
+    os.path.join(os.path.dirname(CRED_FILE) or ".", ".openhost-migrated"),
+)
+
 # Mealie's seeded admin (see mealie/repos/seed/init_users.py and
 # mealie/core/settings/settings.py:_DEFAULT_EMAIL/_DEFAULT_PASSWORD).
 # These are private settings (underscore-prefixed in pydantic) and
@@ -93,10 +123,39 @@ CRED_FILE = os.environ.get(
 DEFAULT_EMAIL = "changeme@example.com"
 DEFAULT_PASSWORD = "MyPassword"
 
+
+def _owner_email() -> str:
+    """The email we relabel the admin to once bootstrap completes.
+
+    We MUST move the admin off the seeded ``changeme@example.com``
+    address. Mealie's ``/api/app/about/startup-info`` reports
+    ``is_first_login=True`` for as long as ANY user with that exact
+    email exists (see mealie/routes/app/app_about.py:get_startup_info).
+    While ``is_first_login`` is true, both the SPA login page and the
+    index route bounce an admin into the ``/admin/setup`` first-time
+    wizard (frontend/app/pages/index.vue:41 and login.vue:266) — which
+    is exactly the "loading screen that talks about changing the
+    password" the OpenHost owner sees on every SSO login. Renaming the
+    admin's email flips ``is_first_login`` to false and the owner lands
+    straight on their group home page.
+
+    We derive a stable per-zone address so the value is predictable if
+    the owner ever needs to log in manually. The auth-proxy reads the
+    persisted email from the credentials file, so this value is the
+    single source of truth for both auto-login and manual login.
+    """
+    zone = os.environ.get("OPENHOST_ZONE_DOMAIN", "").strip().lower()
+    if zone:
+        return f"owner@{zone}"
+    return "owner@openhost.local"
+
+
 TOKEN_PATH = "/api/auth/token"
 SELF_PATH = "/api/users/self"
 PASSWORD_PATH = "/api/users/password"
 USER_PATH_TMPL = "/api/users/{user_id}"
+GROUP_PREFERENCES_PATH = "/api/groups/preferences"
+HOUSEHOLD_PREFERENCES_PATH = "/api/households/preferences"
 
 # How long to wait for mealie's first migrations + the seeded admin
 # row to land before giving up. Cold start on a small VM can take
@@ -259,6 +318,118 @@ def _update_user(token: str, user_id: str, fields: dict) -> bool:
     return True
 
 
+def _put_preferences(token: str, path: str, fields: dict) -> bool:
+    """PUT a group/household preferences object.
+
+    Mealie's preference update endpoints accept a partial object and
+    merge it (see controller_group_self_service.py:update_group_preferences
+    and controller_household_self_service.py:update_household_preferences).
+    We only send the keys we intend to change.
+
+    Best-effort: on failure we log and return False. The caller treats a
+    failure as "public sharing not enabled" rather than fatal.
+    """
+    payload = json.dumps(fields).encode("utf-8")
+    status, body, _ = _request(
+        "PUT",
+        path,
+        {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Content-Length": str(len(payload)),
+        },
+        payload,
+        timeout=15,
+    )
+    if status not in (200, 201, 204):
+        log.warning(
+            "PUT %s returned %d: %s",
+            path,
+            status,
+            body[:300].decode("utf-8", errors="replace"),
+        )
+        return False
+    return True
+
+
+def _migration_marker_present() -> bool:
+    return os.path.exists(MIGRATION_MARKER_FILE)
+
+
+def _write_migration_marker() -> None:
+    """Record that the one-shot public-sharing migration has run.
+
+    Best-effort: if we can't write the marker we log and carry on. The
+    only consequence of a missing marker is that the migration may run
+    again on the next restart — which is safe for the email relabel
+    (gated on the seeded email still being present) but would re-enable
+    public sharing. To avoid silently reverting an operator's later
+    re-privatisation, the caller only enables sharing when the marker
+    is absent AND writes the marker in the same pass, so a marker write
+    failure is the only window in which a re-enable could recur.
+    """
+    parent = os.path.dirname(MIGRATION_MARKER_FILE)
+    if parent:
+        try:
+            os.makedirs(parent, exist_ok=True)
+        except OSError as exc:
+            log.warning("could not create marker parent dir %s: %s", parent, exc)
+            return
+    try:
+        with open(MIGRATION_MARKER_FILE, "w", encoding="utf-8") as fh:
+            fh.write(
+                "# Sentinel written by bootstrap_admin.py. Its presence means the\n"
+                "# one-time 'enable public sharing' migration has already run; the\n"
+                "# bootstrap will NOT touch group/household privacy again. Safe to\n"
+                "# delete if you want the migration to re-run on next restart.\n"
+                "# NOT a secret.\n"
+            )
+    except OSError as exc:
+        log.warning("could not write migration marker %s: %s", MIGRATION_MARKER_FILE, exc)
+
+
+def _enable_public_sharing(token: str) -> None:
+    """Turn off group/household privacy so public recipe links work.
+
+    On a fresh database Mealie seeds the default group + household with
+    ``private_group=True`` / ``private_household=True`` (the schema
+    defaults, see mealie/schema/group/group_preferences.py:9 and
+    mealie/schema/household/household_preferences.py:11). While a group
+    is private, anonymous visitors hit
+    ``/api/explore/groups/<slug>/recipes/<slug>`` — the endpoint the
+    public-recipe page (`/g/<slug>/r/<slug>`) calls — and get a 404
+    "group not found", so "make this recipe public and share the link"
+    silently produces a dead link.
+
+    Token-based share links (`/g/<slug>/shared/r/<token>`) work
+    regardless of this setting because they resolve purely by share
+    token (mealie/routes/recipe/shared_routes.py) — but the more common
+    "publish + copy link" flow needs the group + household to be public.
+
+    We flip both to non-private exactly ONCE, gated by the migration
+    marker file (see MIGRATION_MARKER_FILE). Callers must only invoke
+    this when the marker is absent, and MUST write the marker afterwards
+    (via _write_migration_marker) so this never runs again — otherwise
+    an operator who later re-privatises their group in the UI would have
+    that choice silently reverted on the next container restart.
+
+    Best-effort and non-fatal: a failure just leaves the operator to
+    toggle "Enable public access" in Group / Household settings by hand.
+    """
+    if _put_preferences(token, GROUP_PREFERENCES_PATH, {"privateGroup": False}):
+        log.info("enabled public group access (privateGroup=false)")
+    if _put_preferences(
+        token,
+        HOUSEHOLD_PREFERENCES_PATH,
+        {"privateHousehold": False, "recipePublic": True},
+    ):
+        log.info(
+            "enabled public household access "
+            "(privateHousehold=false, recipePublic=true)"
+        )
+
+
 def _generate_password() -> str:
     alphabet = string.ascii_letters + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(32))
@@ -353,6 +524,96 @@ def _write_credentials(email: str, password: str) -> bool:
         os.umask(old_umask)
 
 
+def _migrate_existing_deploy(email: str, password: str) -> None:
+    """Remediate deploys bootstrapped by an older version of this script.
+
+    Earlier revisions kept the admin email at ``changeme@example.com``
+    and left the default group private. That leaves two user-visible
+    bugs on an already-running install: (1) the owner is bounced into
+    the /admin/setup wizard on every SSO login because
+    ``is_first_login`` stays true, and (2) "publish recipe + share link"
+    produces dead links for anonymous visitors.
+
+    On restart of such a deploy this migrates it in place:
+      * if the admin email is still the seeded default, relabel it to
+        the per-zone owner address and rewrite the persisted creds so
+        the auth-proxy and manual login keep working;
+      * enable public group/household sharing ONCE (gated by the
+        migration marker), then write the marker so a later operator
+        choice to re-privatise is never reverted.
+
+    Everything here is best-effort and idempotent. If the migration
+    marker is already present we skip entirely — a fully-migrated deploy
+    makes no requests and never touches operator preferences.
+    """
+    # A present marker means this deploy has already been through the
+    # migration; both remediations below are one-time, so there's
+    # nothing to do. Crucially this prevents re-enabling public sharing
+    # on a deploy where the operator has since re-privatised.
+    if _migration_marker_present():
+        return
+
+    token = _wait_for_login(email, password, 60)
+    if not token:
+        log.info("migration: could not obtain token; skipping remediation")
+        return
+
+    me = _get_self(token)
+    if not me:
+        log.info("migration: could not read /api/users/self; skipping remediation")
+        return
+
+    # (1) Move the admin off the seeded email if it's still there.
+    if me.get("email") == DEFAULT_EMAIL:
+        user_id = me.get("id")
+        new_email = _owner_email()
+        update_fields = {
+            "id": user_id,
+            "fullName": me.get("fullName") or "Owner",
+            "email": new_email,
+            "username": me.get("username") or "admin",
+            "admin": True,
+            "group": me.get("group"),
+            "household": me.get("household"),
+            "advanced": me.get("advanced", False),
+            "canInviteUsers": me.get("canInviteUsers", True),
+            "canManage": me.get("canManage", True),
+            "canManageHousehold": me.get("canManageHousehold", True),
+            "canOrganize": me.get("canOrganize", True),
+        }
+        update_fields = {k: v for k, v in update_fields.items() if v is not None}
+        if (
+            user_id
+            and _update_user(token, user_id, update_fields)
+            and _verify_login(new_email, password)
+        ):
+            if _write_credentials(new_email, password):
+                log.info(
+                    "migration: relabelled admin email %s -> %s "
+                    "(fixes recurring first-time-setup screen)",
+                    DEFAULT_EMAIL,
+                    new_email,
+                )
+            else:
+                log.warning(
+                    "migration: relabelled email in mealie but could not "
+                    "persist creds; auto-login may break until %s is fixed",
+                    CRED_FILE,
+                )
+        else:
+            log.warning("migration: admin email relabel to %s failed", new_email)
+
+    # (2) Enable public sharing exactly once, then record the marker so
+    # this never runs again (see the marker guard at the top of this
+    # function). Writing the marker unconditionally after the attempt is
+    # deliberate: even if _enable_public_sharing's PUTs failed, we don't
+    # want to keep retrying on every restart and risk clobbering a later
+    # operator choice — the operator can toggle sharing by hand, and can
+    # delete the marker to force a re-run.
+    _enable_public_sharing(token)
+    _write_migration_marker()
+
+
 def main() -> int:
     persisted_email, persisted_pw = _read_persisted_credentials()
     if persisted_email and persisted_pw:
@@ -361,7 +622,10 @@ def main() -> int:
         # cleanly (idempotent re-bootstrap is a no-op).
         for _ in range(60):
             if _verify_login(persisted_email, persisted_pw):
-                log.info("persisted owner credentials still valid; nothing to do")
+                log.info("persisted owner credentials still valid")
+                # Migrate deploys bootstrapped by an older revision that
+                # left the seeded email / private group in place.
+                _migrate_existing_deploy(persisted_email, persisted_pw)
                 return 0
             time.sleep(5)
         log.warning(
@@ -406,24 +670,21 @@ def main() -> int:
         )
         return 1
 
-    # Verify the new password works before persisting.
+    # Verify the new password works before continuing.
     if not _verify_login(DEFAULT_EMAIL, new_password):
         log.error("rotated password but verify-login failed; not persisting")
         return 1
 
-    # Best-effort: relabel the user (cosmetic). We deliberately
-    # keep the email at DEFAULT_EMAIL so an operator who needs to
-    # fall back to Mealie's manual login form has a predictable
-    # username — the auth-proxy and the manual login both use the
-    # same value. This means Mealie's about-page security warning
-    # ("changeme@example.com user is still in the database",
-    # admin_about.py:59) will continue to flash, which is mildly
-    # annoying but doesn't reflect a real risk: the seeded
-    # password has been rotated. If the warning becomes
-    # operationally important we could change the email to
-    # something like "owner@<zone>" and persist that — left as a
-    # follow-up.
-    new_email = DEFAULT_EMAIL
+    # Relabel the admin — CRITICALLY including moving the email off the
+    # seeded ``changeme@example.com`` address. This is NOT cosmetic:
+    # Mealie reports ``is_first_login=True`` for as long as a user with
+    # that exact email exists (app_about.py:get_startup_info), and while
+    # that flag is true the SPA bounces an admin into the /admin/setup
+    # first-time wizard on every login (index.vue:41, login.vue:266) —
+    # the "loading screen that mentions changing your password" the
+    # OpenHost owner sees. Changing the email flips is_first_login to
+    # false so the owner lands directly on their home page.
+    new_email = _owner_email()
     # Force the cosmetic full_name to "Owner" — the seeded admin's
     # full_name is "Change Me" (see init_users.py:53), and overwriting
     # it makes the user list in Mealie's admin UI more recognisable.
@@ -448,8 +709,44 @@ def main() -> int:
     # Remove keys with None values; mealie's UserBase pydantic
     # validator rejects unknown shapes.
     update_fields = {k: v for k, v in update_fields.items() if v is not None}
-    _update_user(token, user_id, update_fields)
-    # Non-fatal if this fails — the about-page warning is cosmetic.
+    if not _update_user(token, user_id, update_fields):
+        # The email relabel failed. Fall back to the seeded email so
+        # the persisted credentials still line up with what mealie
+        # believes the admin's login is — auto-login keeps working,
+        # but the owner will keep seeing the first-time-setup wizard
+        # (is_first_login stays true) until the email is changed by
+        # hand. Better a working (if slightly annoying) login than a
+        # broken one.
+        log.warning(
+            "could not relabel admin email to %s; falling back to %s. "
+            "The owner may keep seeing Mealie's first-time-setup screen "
+            "until the admin email is changed away from the default.",
+            new_email,
+            DEFAULT_EMAIL,
+        )
+        new_email = DEFAULT_EMAIL
+    else:
+        # Confirm the new email actually logs in before we persist it;
+        # if mealie accepted the PUT but the email didn't take for some
+        # reason, fall back rather than persist a credential that won't
+        # authenticate.
+        if not _verify_login(new_email, new_password):
+            log.warning(
+                "relabelled admin email to %s but verify-login failed; "
+                "falling back to %s for persisted credentials",
+                new_email,
+                DEFAULT_EMAIL,
+            )
+            new_email = DEFAULT_EMAIL
+
+    # Enable public sharing so "publish recipe + copy link" works for
+    # anonymous visitors. Best-effort / non-fatal — see the function
+    # docstring. We write the migration marker immediately afterwards so
+    # the restart path (_migrate_existing_deploy) treats this deploy as
+    # already migrated and never re-enables sharing on a later restart,
+    # preserving any operator choice to re-privatise.
+    _enable_public_sharing(token)
+    _write_migration_marker()
 
     if not _write_credentials(new_email, new_password):
         # Password was already rotated in mealie but we couldn't

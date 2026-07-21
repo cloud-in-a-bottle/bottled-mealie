@@ -46,13 +46,30 @@ container :8080  ── auth_proxy.py ──────────────
 
 `bootstrap_admin.py` runs once on cold start. Mealie seeds a default admin
 (`changeme@example.com` / `MyPassword`) on first DB init; we use that to log in,
-then PUT `/api/users/password` to rotate to a 32-char generated password. The
-new password is persisted to `admin-credentials.txt` (mode 0600) for the
-auth-proxy to consume. The user's email stays at `changeme@example.com` so the
-auth-proxy's stored credentials match what an operator would type if they
-ever fall back to Mealie's manual login form. Open self-signup is disabled
-via `ALLOW_SIGNUP=false` exported by `start.sh` (Mealie's registration
-endpoint reads `settings.ALLOW_SIGNUP` directly).
+then PUT `/api/users/password` to rotate to a 32-char generated password. We
+also PUT `/api/users/{id}` to move the admin's email off the seeded
+`changeme@example.com` address to a per-zone `owner@<zone>` value. This email
+change is load-bearing: Mealie reports `is_first_login=true` for as long as a
+user with the seeded email exists, and while that flag is true the SPA bounces
+an admin into the `/admin/setup` first-time-setup wizard on every login. That
+wizard (which mentions changing the password) is the "loading screen" an owner
+would otherwise see on each SSO login. Moving the email flips the flag to
+false so the owner lands straight on their home page. The rotated password and
+the new email are persisted to `admin-credentials.txt` (mode 0600) for the
+auth-proxy to consume, so auto-login and any manual fallback login stay in
+sync. Open self-signup is disabled via `ALLOW_SIGNUP=false` exported by
+`start.sh` (Mealie's registration endpoint reads `settings.ALLOW_SIGNUP`
+directly).
+
+On first boot the bootstrap also enables public group + household sharing
+once (`privateGroup=false`, `privateHousehold=false`, `recipePublic=true`) so
+the "publish a recipe and copy the link" flow works for anonymous visitors —
+Mealie seeds these as private, which otherwise makes public-recipe links
+dead-ends. This is gated by a one-shot marker file (`.openhost-migrated` in
+the data dir), so if you later re-privatise your group in the UI it is never
+reverted on restart. Deploys created by an older revision of this packaging
+are migrated in place on their next restart (email relabel + one-time sharing
+enable).
 
 ## Auth model
 

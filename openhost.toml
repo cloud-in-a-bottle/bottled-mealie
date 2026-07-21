@@ -72,8 +72,11 @@ cpu_millicores = 1000
 # Persistent state under /data/app_data/mealie/:
 #   * data/                 — Mealie's $MEALIE_HOME/data dir
 #                             (sqlite db, recipe images, backups).
-#   * admin-credentials.txt — generated owner password the
+#   * admin-credentials.txt — generated owner email + password the
 #                             auth-proxy uses for auto-login
 #                             (mode 0600).
+#   * .openhost-migrated    — one-shot sentinel marking that the
+#                             enable-public-sharing migration has run
+#                             (NOT a secret; empty marker file).
 app_data = true
 app_temp_data = true
