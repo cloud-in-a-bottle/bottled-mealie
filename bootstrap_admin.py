@@ -318,6 +318,47 @@ def _update_user(token: str, user_id: str, fields: dict) -> bool:
     return True
 
 
+def _build_relabel_payload(me: dict, new_email: str, new_full_name: str) -> dict:
+    """Build a self-update payload that ONLY changes email + full name.
+
+    Mealie forbids an admin from changing their own permission
+    attributes (mealie/routes/users/_helpers.py:assert_user_change_allowed
+    raises 403 "Admins can't change their own permissions" if any of
+    ``admin``/``can_invite``/``can_manage``/``can_manage_household``/
+    ``can_organize`` differs between the current user and the PUT body).
+    The comparison uses the values as they come back from
+    ``/api/users/self``, so the ONLY safe way to relabel our own email
+    is to echo every field from the ``me`` response verbatim — using the
+    exact camelCase keys the API returns (e.g. ``canInvite``, NOT
+    ``canInviteUsers``) — and override just the email and full name.
+
+    Starting from a hand-written field list is what previously produced
+    a 403: a mistyped permission key (``canInviteUsers``) fell back to
+    the schema default (False) while the live admin had it True, so the
+    guard saw a permission change and rejected the whole PUT.
+    """
+    payload = dict(me)  # copy the exact self representation
+    payload["email"] = new_email
+    payload["fullName"] = new_full_name
+    # Drop read-only / derived keys the UserBase update schema doesn't
+    # accept (they're returned by /self but rejected on PUT). Keeping
+    # only what UserBase defines avoids 422s while preserving every
+    # permission attribute the 403-guard compares against.
+    for read_only in (
+        "groupId",
+        "groupSlug",
+        "householdId",
+        "householdSlug",
+        "cacheKey",
+        "authMethod",
+        "tokens",
+        "password",
+    ):
+        payload.pop(read_only, None)
+    # Strip Nones so pydantic doesn't choke on unexpected null shapes.
+    return {k: v for k, v in payload.items() if v is not None}
+
+
 def _put_preferences(token: str, path: str, fields: dict) -> bool:
     """PUT a group/household preferences object.
 
@@ -567,21 +608,9 @@ def _migrate_existing_deploy(email: str, password: str) -> None:
     if me.get("email") == DEFAULT_EMAIL:
         user_id = me.get("id")
         new_email = _owner_email()
-        update_fields = {
-            "id": user_id,
-            "fullName": me.get("fullName") or "Owner",
-            "email": new_email,
-            "username": me.get("username") or "admin",
-            "admin": True,
-            "group": me.get("group"),
-            "household": me.get("household"),
-            "advanced": me.get("advanced", False),
-            "canInviteUsers": me.get("canInviteUsers", True),
-            "canManage": me.get("canManage", True),
-            "canManageHousehold": me.get("canManageHousehold", True),
-            "canOrganize": me.get("canOrganize", True),
-        }
-        update_fields = {k: v for k, v in update_fields.items() if v is not None}
+        update_fields = _build_relabel_payload(
+            me, new_email, me.get("fullName") or "Owner"
+        )
         if (
             user_id
             and _update_user(token, user_id, update_fields)
@@ -689,26 +718,10 @@ def main() -> int:
     # full_name is "Change Me" (see init_users.py:53), and overwriting
     # it makes the user list in Mealie's admin UI more recognisable.
     new_full_name = "Owner"
-    new_username = me.get("username") or "admin"
-    update_fields = {
-        "id": user_id,
-        "fullName": new_full_name,
-        "email": new_email,
-        "username": new_username,
-        "admin": True,
-        # Preserve group / household so we don't accidentally move
-        # the admin out of their default group.
-        "group": me.get("group"),
-        "household": me.get("household"),
-        "advanced": me.get("advanced", False),
-        "canInviteUsers": me.get("canInviteUsers", True),
-        "canManage": me.get("canManage", True),
-        "canManageHousehold": me.get("canManageHousehold", True),
-        "canOrganize": me.get("canOrganize", True),
-    }
-    # Remove keys with None values; mealie's UserBase pydantic
-    # validator rejects unknown shapes.
-    update_fields = {k: v for k, v in update_fields.items() if v is not None}
+    # Echo the exact self representation and change only email + name so
+    # we don't trip Mealie's "admins can't change their own permissions"
+    # 403 guard (see _build_relabel_payload).
+    update_fields = _build_relabel_payload(me, new_email, new_full_name)
     if not _update_user(token, user_id, update_fields):
         # The email relabel failed. Fall back to the seeded email so
         # the persisted credentials still line up with what mealie
