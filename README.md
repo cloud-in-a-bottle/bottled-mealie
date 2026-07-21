@@ -47,19 +47,25 @@ container :8080  ── auth_proxy.py ──────────────
 `bootstrap_admin.py` runs once on cold start. Mealie seeds a default admin
 (`changeme@example.com` / `MyPassword`) on first DB init; we use that to log in,
 then PUT `/api/users/password` to rotate to a 32-char generated password. We
-also PUT `/api/users/{id}` to move the admin's email off the seeded
-`changeme@example.com` address to a per-zone `owner@<zone>` value. This email
-change is load-bearing: Mealie reports `is_first_login=true` for as long as a
-user with the seeded email exists, and while that flag is true the SPA bounces
-an admin into the `/admin/setup` first-time-setup wizard on every login. That
-wizard (which mentions changing the password) is the "loading screen" an owner
-would otherwise see on each SSO login. Moving the email flips the flag to
-false so the owner lands straight on their home page. The rotated password and
-the new email are persisted to `admin-credentials.txt` (mode 0600) for the
-auth-proxy to consume, so auto-login and any manual fallback login stay in
-sync. Open self-signup is disabled via `ALLOW_SIGNUP=false` exported by
-`start.sh` (Mealie's registration endpoint reads `settings.ALLOW_SIGNUP`
-directly).
+also PUT `/api/users/{id}` to relabel the admin with the OpenHost owner's own
+identity: the username and full name are set to `$OPENHOST_OWNER_USERNAME` (the
+name the owner chose on the OpenHost claim/setup page, defaulting to `owner`),
+and the email is set to `<owner-username>@<zone>` (e.g.
+`andrew@andrew-2.selfhost.imbue.com`). The email change is load-bearing:
+Mealie reports `is_first_login=true` for as long as a user with the seeded
+`changeme@example.com` email exists, and while that flag is true the SPA
+bounces an admin into the `/admin/setup` first-time-setup wizard on every
+login. That wizard (which mentions changing the password) is the "loading
+screen" an owner would otherwise see on each SSO login. Moving the email off
+the seed flips the flag to false so the owner lands straight on their home
+page, and reusing their own username/email means the account matches the
+identity they set up in OpenHost. Only the email, full name, and username are
+changed (never a permission field) so Mealie's "admins can't change their own
+permissions" guard is not tripped. The rotated password and the new email are
+persisted to `admin-credentials.txt` (mode 0600) for the auth-proxy to consume,
+so auto-login and any manual fallback login stay in sync. Open self-signup is
+disabled via `ALLOW_SIGNUP=false` exported by `start.sh` (Mealie's registration
+endpoint reads `settings.ALLOW_SIGNUP` directly).
 
 On first boot the bootstrap also enables public group + household sharing
 once (`privateGroup=false`, `privateHousehold=false`, `recipePublic=true`) so
