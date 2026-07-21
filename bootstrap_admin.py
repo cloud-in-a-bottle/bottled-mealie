@@ -12,21 +12,28 @@ window:
   2. Login with the defaults to obtain a JWT.
   3. Generate a fresh 32-char password.
   4. PUT ``/api/users/password`` to rotate the admin's password.
-  5. PUT ``/api/users/{id}`` to relabel the user as "Owner" / "admin"
-     AND move its email off the seeded ``changeme@example.com``
-     address to a per-zone ``owner@<zone>`` value. This email change is
+  5. PUT ``/api/users/{id}`` to relabel the user with the OpenHost
+     owner's identity — username + full name set to
+     ``$OPENHOST_OWNER_USERNAME`` and email set to
+     ``<owner-username>@<zone>`` (e.g.
+     ``andrew@andrew-2.selfhost.imbue.com``). The email change is
      load-bearing, not cosmetic: Mealie reports ``is_first_login=True``
-     for as long as a user with the seeded email exists
-     (mealie/routes/app/app_about.py:get_startup_info), and while that
-     flag is true the SPA bounces an admin into the ``/admin/setup``
-     first-time-setup wizard on every login (index.vue:41,
-     login.vue:266). That wizard — which talks about changing the
-     password — is the "loading screen" an OpenHost owner otherwise
-     sees on each SSO login. Moving the email flips the flag to false.
-     The auth-proxy reads the (new) email from the persisted
-     credentials file, so auto-login and manual login stay in sync. If
-     the relabel fails we fall back to the seeded email so login still
-     works (the owner just keeps seeing the setup wizard).
+     for as long as a user with the seeded ``changeme@example.com``
+     email exists (mealie/routes/app/app_about.py:get_startup_info),
+     and while that flag is true the SPA bounces an admin into the
+     ``/admin/setup`` first-time-setup wizard on every login
+     (index.vue:41, login.vue:266). That wizard — which talks about
+     changing the password — is the "loading screen" an OpenHost owner
+     otherwise sees on each SSO login. Moving the email off the seed
+     flips the flag to false. Reusing the owner's own username/email
+     means the pre-filled identity matches what they set on the
+     OpenHost claim/setup page. Only the email, full name, and username
+     are changed (never a permission field) so we don't trip Mealie's
+     "admins can't change their own permissions" 403 guard. The
+     auth-proxy reads the (new) email from the persisted credentials
+     file, so auto-login and manual login stay in sync. If the relabel
+     fails we fall back to the seeded email so login still works (the
+     owner just keeps seeing the setup wizard).
   6. Enable public group + household sharing ONCE so "publish a recipe
      and copy the link" works for anonymous visitors. Mealie seeds the
      default group/household as private, which makes public-recipe
@@ -124,6 +131,40 @@ DEFAULT_EMAIL = "changeme@example.com"
 DEFAULT_PASSWORD = "MyPassword"
 
 
+# Fallback owner username when OpenHost doesn't hand one down. This
+# mirrors the platform's own default (compute_space core.auth.auth
+# DEFAULT_OWNER_USERNAME = "owner"), so a blank env var maps to the
+# same identity the OpenHost dashboard shows.
+DEFAULT_OWNER_USERNAME = "owner"
+
+# Local-part of an email address per RFC 5321/5322 dot-atom, plus the
+# characters Mealie's own validator tolerates. We only use this to
+# decide whether the owner username is safe to drop verbatim into the
+# left-hand side of an email; anything outside it gets sanitised.
+_EMAIL_LOCALPART_RE = re.compile(r"^[A-Za-z0-9._%+-]+$")
+
+
+def _owner_username() -> str:
+    """The OpenHost owner's username, used as Mealie's username + name.
+
+    OpenHost injects ``OPENHOST_OWNER_USERNAME`` into every app container
+    (see compute_space core/data.py:provision_data). It's the name the
+    owner picked on the claim/setup page (falling back to the platform
+    default ``owner`` when they left it blank). We reuse it verbatim as
+    the Mealie admin's username and full name so the owner sees a
+    familiar identity instead of the seeded "Change Me" / "admin".
+
+    Sanitised to what Mealie's username field accepts: we strip
+    whitespace and, defensively, fall back to the platform default if
+    the value is empty. We do NOT lowercase it — Mealie usernames are
+    case-preserving — but the platform already constrains owner
+    usernames to ``^[a-z0-9][a-z0-9._-]{0,29}$`` so this is normally a
+    no-op.
+    """
+    raw = os.environ.get("OPENHOST_OWNER_USERNAME", "").strip()
+    return raw or DEFAULT_OWNER_USERNAME
+
+
 def _owner_email() -> str:
     """The email we relabel the admin to once bootstrap completes.
 
@@ -139,15 +180,26 @@ def _owner_email() -> str:
     admin's email flips ``is_first_login`` to false and the owner lands
     straight on their group home page.
 
-    We derive a stable per-zone address so the value is predictable if
-    the owner ever needs to log in manually. The auth-proxy reads the
+    We build the address as ``<owner-username>@<zone>`` so it matches
+    the identity the owner picked on the OpenHost setup page (e.g.
+    ``andrew@andrew-2.selfhost.imbue.com``). The auth-proxy reads the
     persisted email from the credentials file, so this value is the
     single source of truth for both auto-login and manual login.
+
+    If the owner username somehow contains characters that aren't valid
+    in an email local-part, we fall back to the safe ``owner`` local
+    part rather than mint an address Mealie's validator would reject
+    (which would fail the relabel and leave is_first_login true). If the
+    zone domain is missing we fall back to a syntactically-valid
+    sentinel domain so the address is still well-formed.
     """
     zone = os.environ.get("OPENHOST_ZONE_DOMAIN", "").strip().lower()
+    local = _owner_username()
+    if not _EMAIL_LOCALPART_RE.match(local):
+        local = DEFAULT_OWNER_USERNAME
     if zone:
-        return f"owner@{zone}"
-    return "owner@openhost.local"
+        return f"{local}@{zone}"
+    return f"{local}@openhost.local"
 
 
 TOKEN_PATH = "/api/auth/token"
@@ -318,8 +370,13 @@ def _update_user(token: str, user_id: str, fields: dict) -> bool:
     return True
 
 
-def _build_relabel_payload(me: dict, new_email: str, new_full_name: str) -> dict:
-    """Build a self-update payload that ONLY changes email + full name.
+def _build_relabel_payload(
+    me: dict,
+    new_email: str,
+    new_full_name: str,
+    new_username: str | None = None,
+) -> dict:
+    """Build a self-update payload that changes email + name (+ username).
 
     Mealie forbids an admin from changing their own permission
     attributes (mealie/routes/users/_helpers.py:assert_user_change_allowed
@@ -327,10 +384,13 @@ def _build_relabel_payload(me: dict, new_email: str, new_full_name: str) -> dict
     ``admin``/``can_invite``/``can_manage``/``can_manage_household``/
     ``can_organize`` differs between the current user and the PUT body).
     The comparison uses the values as they come back from
-    ``/api/users/self``, so the ONLY safe way to relabel our own email
+    ``/api/users/self``, so the ONLY safe way to relabel our own account
     is to echo every field from the ``me`` response verbatim — using the
     exact camelCase keys the API returns (e.g. ``canInvite``, NOT
-    ``canInviteUsers``) — and override just the email and full name.
+    ``canInviteUsers``) — and override just the non-permission fields we
+    intend to change (email, full name, and optionally username). None
+    of those three are in the permission set, so changing them is
+    allowed for a self-edit.
 
     Starting from a hand-written field list is what previously produced
     a 403: a mistyped permission key (``canInviteUsers``) fell back to
@@ -340,6 +400,8 @@ def _build_relabel_payload(me: dict, new_email: str, new_full_name: str) -> dict
     payload = dict(me)  # copy the exact self representation
     payload["email"] = new_email
     payload["fullName"] = new_full_name
+    if new_username:
+        payload["username"] = new_username
     # Drop read-only / derived keys the UserBase update schema doesn't
     # accept (they're returned by /self but rejected on PUT). Keeping
     # only what UserBase defines avoids 422s while preserving every
@@ -608,8 +670,9 @@ def _migrate_existing_deploy(email: str, password: str) -> None:
     if me.get("email") == DEFAULT_EMAIL:
         user_id = me.get("id")
         new_email = _owner_email()
+        new_username = _owner_username()
         update_fields = _build_relabel_payload(
-            me, new_email, me.get("fullName") or "Owner"
+            me, new_email, new_username, new_username=new_username
         )
         if (
             user_id
@@ -714,14 +777,21 @@ def main() -> int:
     # OpenHost owner sees. Changing the email flips is_first_login to
     # false so the owner lands directly on their home page.
     new_email = _owner_email()
-    # Force the cosmetic full_name to "Owner" — the seeded admin's
-    # full_name is "Change Me" (see init_users.py:53), and overwriting
-    # it makes the user list in Mealie's admin UI more recognisable.
-    new_full_name = "Owner"
-    # Echo the exact self representation and change only email + name so
-    # we don't trip Mealie's "admins can't change their own permissions"
-    # 403 guard (see _build_relabel_payload).
-    update_fields = _build_relabel_payload(me, new_email, new_full_name)
+    # Use the OpenHost owner's username as both the Mealie username and
+    # full name, and email = <username>@<zone>. This mirrors the
+    # identity the owner picked on the OpenHost claim/setup page so they
+    # see a familiar account instead of the seeded "admin" / "Change Me"
+    # — and, critically, moves the email off changeme@example.com so
+    # is_first_login flips false (see _owner_email).
+    new_username = _owner_username()
+    new_full_name = new_username
+    # Echo the exact self representation and change only the
+    # non-permission fields (email, name, username) so we don't trip
+    # Mealie's "admins can't change their own permissions" 403 guard
+    # (see _build_relabel_payload).
+    update_fields = _build_relabel_payload(
+        me, new_email, new_full_name, new_username=new_username
+    )
     if not _update_user(token, user_id, update_fields):
         # The email relabel failed. Fall back to the seeded email so
         # the persisted credentials still line up with what mealie
