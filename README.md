@@ -1,17 +1,17 @@
-# openhost-mealie
+# bottled-mealie
 
 [Mealie](https://mealie.io) — a self-hosted recipe manager and meal planner —
-packaged as an OpenHost app with one-click SSO and public-recipe passthrough.
+packaged as a Cloud in a Bottle app with one-click SSO and public-recipe passthrough.
 
 ## What you get
 
-- Mealie running on `https://mealie.<zone>/` with TLS terminated by the OpenHost
+- Mealie running on `https://mealie.<zone>/` with TLS terminated by the Cloud in a Bottle
   outer Caddy.
 - The zone owner is auto-logged-in to the admin UI on first visit. No
   Mealie-native sign-in form ever appears for the owner.
 - Public recipe-share links (`/g/<group>/shared/r/<token>`, `/g/<group>/r/<recipe>`
   for recipes flagged public, plus the `/explore/` UI for public groups) work
-  for anonymous visitors without OpenHost SSO.
+  for anonymous visitors without Cloud in a Bottle SSO.
 - Persistent state under `/data/app_data/mealie/` (sqlite + recipe images +
   generated owner credentials, mode 0600).
 - Open self-signup is disabled (`ALLOW_SIGNUP=false`); the owner invites
@@ -47,9 +47,9 @@ container :8080  ── auth_proxy.py ──────────────
 `bootstrap_admin.py` runs once on cold start. Mealie seeds a default admin
 (`changeme@example.com` / `MyPassword`) on first DB init; we use that to log in,
 then PUT `/api/users/password` to rotate to a 32-char generated password. We
-also PUT `/api/users/{id}` to relabel the admin with the OpenHost owner's own
+also PUT `/api/users/{id}` to relabel the admin with the Cloud in a Bottle owner's own
 identity: the username and full name are set to `$OPENHOST_OWNER_USERNAME` (the
-name the owner chose on the OpenHost claim/setup page, defaulting to `owner`),
+name the owner chose on the Cloud in a Bottle claim/setup page, defaulting to `owner`),
 and the email is set to `<owner-username>@<zone>` (e.g.
 `andrew@andrew-2.selfhost.imbue.com`). The email change is load-bearing:
 Mealie reports `is_first_login=true` for as long as a user with the seeded
@@ -59,7 +59,7 @@ login. That wizard (which mentions changing the password) is the "loading
 screen" an owner would otherwise see on each SSO login. Moving the email off
 the seed flips the flag to false so the owner lands straight on their home
 page, and reusing their own username/email means the account matches the
-identity they set up in OpenHost. Only the email, full name, and username are
+identity they set up in Cloud in a Bottle. Only the email, full name, and username are
 changed (never a permission field) so Mealie's "admins can't change their own
 permissions" guard is not tripped. The rotated password and the new email are
 persisted to `admin-credentials.txt` (mode 0600) for the auth-proxy to consume,
@@ -82,7 +82,7 @@ enable).
 | Visitor                    | Outcome                                           |
 | -------------------------- | ------------------------------------------------- |
 | Anonymous, public path     | Forwarded to Mealie unchanged (anonymous read).   |
-| Anonymous, non-public path | OpenHost router 302's to `/login` on parent zone. |
+| Anonymous, non-public path | Cloud in a Bottle router 302's to `/login` on parent zone. |
 | Owner, has cookie          | Forwarded unchanged.                              |
 | Owner, no cookie, HTML     | Auto-login mints `mealie.access_token` cookie.    |
 | Owner, no cookie, API/docs | Forwarded; mobile apps use Bearer tokens.         |
@@ -97,7 +97,7 @@ The auth-proxy ALWAYS strips client-supplied `X-OpenHost-Is-Owner` and
 
 ## Public paths
 
-The following path prefixes are allowed through the OpenHost router without
+The following path prefixes are allowed through the Cloud in a Bottle router without
 zone_auth, and the auth-proxy does NOT auto-login on them:
 
 - `/g/` — group-scoped pages: public recipes (`/g/<group>/r/<slug>` when
@@ -122,10 +122,10 @@ The lists in `openhost.toml`'s `routing.public_paths` and `auth_proxy.py`'s
 
 | File                  | Purpose                                                 |
 | --------------------- | ------------------------------------------------------- |
-| `openhost.toml`       | OpenHost manifest                                       |
+| `openhost.toml`       | Cloud in a Bottle manifest                                       |
 | `Dockerfile`          | Wraps `ghcr.io/mealie-recipes/mealie:v3.17.0` + tini    |
 | `start.sh`            | Boots Mealie on `:9000`, runs bootstrap, starts proxy   |
-| `auth_proxy.py`       | OpenHost-SSO sidecar (Pattern B1)                       |
+| `auth_proxy.py`       | Cloud in a Bottle-SSO sidecar (Pattern B1)                       |
 | `bootstrap_admin.py`  | First-boot owner credential rotation                    |
 | `README.md`           | This file                                               |
 
@@ -143,19 +143,19 @@ To re-sync:
    "no persisted credentials" and either rebootstrap (if the seeded admin
    row still exists) or leave you on the manual login form.
 
-`Reload Router` from the OpenHost dashboard after editing.
+`Reload Router` from the Cloud in a Bottle dashboard after editing.
 
 ## Why Pattern B1 (HTTP login dance) and not Pattern D (OIDC)?
 
 Mealie supports OIDC natively (`OIDC_AUTH_ENABLED=true`,
 `OIDC_CONFIGURATION_URL=...`) and Pattern D would normally be the cleaner
-choice. We picked B1 because OpenHost's router currently exposes only
+choice. We picked B1 because Cloud in a Bottle's router currently exposes only
 `/.well-known/jwks.json` — there's no `openid-configuration` discovery
 document for Mealie's authlib client to consume. A Pattern D implementation
 would require running an in-container OIDC IdP bridge (along the lines of
-`openhost-immich/oidc-bridge`); that's tractable but materially more code
-than B1, and B1 is well-trodden across openhost-memos / openhost-overleaf /
-openhost-vscode. If OpenHost grows an OpenID Connect discovery endpoint in
+`bottled-immich/oidc-bridge`); that's tractable but materially more code
+than B1, and B1 is well-trodden across bottled-memos / bottled-overleaf /
+bottled-vscode. If Cloud in a Bottle grows an OpenID Connect discovery endpoint in
 the future, swapping in Pattern D is a one-Dockerfile-change away.
 
 ## Threat model around `admin-credentials.txt`
