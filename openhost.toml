@@ -1,7 +1,7 @@
 [app]
 name = "mealie"
 version = "0.1.0"
-description = "Mealie (self-hosted recipe manager / meal planner) packaged for OpenHost with one-click SSO. The zone owner is auto-logged-in to the admin UI without ever seeing Mealie's native login form. Public recipe-share links remain reachable by anonymous visitors."
+description = "Mealie (self-hosted recipe manager / meal planner) packaged for Cloud in a Bottle with one-click SSO. The zone owner is auto-logged-in to the admin UI without ever seeing Mealie's native login form. Public recipe-share links remain reachable by anonymous visitors."
 authors = ["Andrew Laack <andrew@laack.co>"]
 
 [runtime.container]
