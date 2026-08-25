@@ -66,7 +66,7 @@ public_paths = [
 # fit in 512 MiB but image-thumbnailing peaks higher. 1 GiB leaves
 # headroom for recipe imports.
 memory_mb = 1024
-cpu_millicores = 1000
+cpu_cores = 1.0
 
 [data]
 # Persistent state under /data/app_data/mealie/:
