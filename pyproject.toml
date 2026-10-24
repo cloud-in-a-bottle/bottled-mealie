@@ -1,0 +1,16 @@
+# Test-only Python project: runs the app under the Cloud in a Bottle test harness. The app itself isn't Python.
+[project]
+name = "mealie-tests"
+version = "0.0.0"
+requires-python = "==3.12.*"
+
+[dependency-groups]
+dev = [
+    "openhost[test-harness] @ git+https://github.com/cloud-in-a-bottle/cloud-in-a-bottle@main",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
