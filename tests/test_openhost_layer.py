@@ -91,11 +91,10 @@ def test_anonymous_can_read_a_public_recipe(stack: OpenhostStack, owner_token: s
     assert created.status_code == 201, f"creating a recipe: {created.status_code} {created.text[:300]}"
     recipe_slug = created.json()
 
-    # bootstrap_admin.py makes the default group and household public once; on a fresh Mealie they're private and
-    # every public recipe link 404s.
+    # /api/ and /g/ are public paths at the router, so anonymous visitors reach the share page and the API it calls.
     response = requests.get(f"{stack.url}/api/explore/groups/{group_slug}/recipes/{recipe_slug}", timeout=30)
     assert response.status_code == 200, f"anonymous public recipe: {response.status_code} {response.text[:300]}"
     assert response.json()["slug"] == recipe_slug
 
-    page = requests.get(f"{stack.url}/g/{group_slug}/r/{recipe_slug}", headers=HTML, timeout=30)
+    page = requests.get(f"{stack.url}/g/{group_slug}/r/{recipe_slug}", headers=HTML, allow_redirects=False, timeout=30)
     assert page.status_code == 200, f"anonymous public recipe page: {page.status_code} {page.text[:300]}"
