@@ -40,7 +40,7 @@ health_check = "/_healthz"
 #   /api/media/                  — recipe images (referenced by public pages)
 #   /_nuxt/, /assets/, /icons/, /favicon.ico, /manifest.webmanifest — static
 public_paths = [
-    "/g/",
+    # TEMP: "/g/" removed
     "/explore/",
     # The whole /api/ tree is exposed unauthenticated through the
     # OpenHost router. Mealie's REST API is consumed by mobile apps,
