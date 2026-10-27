@@ -774,7 +774,7 @@ def main() -> int:
         log.error("rotated password but verify-login failed; not persisting")
         return 1
 
-    # Mealie >= 3.20 revokes a user's existing tokens when their password
+    # Newer Mealie (seen on v3.29) revokes a user's tokens when their password
     # changes, so the bootstrap token is dead now. Mint a fresh one with
     # the new password for the relabel + preference calls below.
     fresh = _wait_for_login(DEFAULT_EMAIL, new_password, 60)
