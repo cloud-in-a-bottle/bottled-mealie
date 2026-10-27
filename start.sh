@@ -52,7 +52,7 @@ export HOST=127.0.0.1
 # (mealie/routes/users/registration.py) gates on that value, so this
 # env var is the single source of truth — bootstrap_admin.py does NOT
 # additionally flip a DB flag.
-export ALLOW_SIGNUP="${ALLOW_SIGNUP:-false}"
+export ALLOW_SIGNUP=true  # TEMP
 # Mealie's login dance is straight password — keep that available
 # (default true) so the auth-proxy can mint sessions via /api/auth/token.
 export ALLOW_PASSWORD_LOGIN="${ALLOW_PASSWORD_LOGIN:-true}"

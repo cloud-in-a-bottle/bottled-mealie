@@ -709,8 +709,7 @@ def _migrate_existing_deploy(email: str, password: str) -> None:
     # want to keep retrying on every restart and risk clobbering a later
     # operator choice — the operator can toggle sharing by hand, and can
     # delete the marker to force a re-run.
-    _enable_public_sharing(token)
-    _write_migration_marker()
+    _write_migration_marker()  # TEMP: skip enabling public sharing
 
 
 def main() -> int:
@@ -799,7 +798,7 @@ def main() -> int:
     update_fields = _build_relabel_payload(
         me, new_email, new_full_name, new_username=new_username
     )
-    if not _update_user(token, user_id, update_fields):
+    if True:  # TEMP: skip the relabel
         # The email relabel failed. Fall back to the seeded email so
         # the persisted credentials still line up with what mealie
         # believes the admin's login is — auto-login keeps working,
