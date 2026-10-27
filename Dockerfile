@@ -38,7 +38,7 @@
 # Pinning :v3.17.0 (latest stable as of 2026-05) for reproducible builds.
 # Bump as needed; the OpenHost-side glue is independent of Mealie's
 # minor versions.
-FROM ghcr.io/mealie-recipes/mealie:v3.17.0
+FROM ghcr.io/mealie-recipes/mealie:v3.17.0@sha256:d570139f1891346131d02f8e4d1853100ae4846474958ca6c68cfe1648058467
 
 # Mealie's base image is python:3.12-slim, so apt + pip are available.
 # We only need python3 (already present) and the small extras for the
