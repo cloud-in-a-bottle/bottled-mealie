@@ -774,6 +774,13 @@ def main() -> int:
         log.error("rotated password but verify-login failed; not persisting")
         return 1
 
+    # Mealie >= 3.20 revokes a user's existing tokens when their password
+    # changes, so the bootstrap token is dead now. Mint a fresh one with
+    # the new password for the relabel + preference calls below.
+    fresh = _wait_for_login(DEFAULT_EMAIL, new_password, 60)
+    if fresh:
+        token = fresh
+
     # Relabel the admin — CRITICALLY including moving the email off the
     # seeded ``changeme@example.com`` address. This is NOT cosmetic:
     # Mealie reports ``is_first_login=True`` for as long as a user with
@@ -835,6 +842,10 @@ def main() -> int:
     # the restart path (_migrate_existing_deploy) treats this deploy as
     # already migrated and never re-enables sharing on a later restart,
     # preserving any operator choice to re-privatise.
+    # Re-login in case the relabel also invalidated the token.
+    fresh = _wait_for_login(new_email, new_password, 60)
+    if fresh:
+        token = fresh
     _enable_public_sharing(token)
     _write_migration_marker()
 
