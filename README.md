@@ -123,7 +123,7 @@ The lists in `openhost.toml`'s `routing.public_paths` and `auth_proxy.py`'s
 | File                  | Purpose                                                 |
 | --------------------- | ------------------------------------------------------- |
 | `openhost.toml`       | Cloud in a Bottle manifest                                       |
-| `Dockerfile`          | Wraps `ghcr.io/mealie-recipes/mealie:v3.17.0` + tini    |
+| `Dockerfile`          | Wraps `ghcr.io/mealie-recipes/mealie:v3.29.0` + tini    |
 | `start.sh`            | Boots Mealie on `:9000`, runs bootstrap, starts proxy   |
 | `auth_proxy.py`       | Cloud in a Bottle-SSO sidecar (Pattern B1)                       |
 | `bootstrap_admin.py`  | First-boot owner credential rotation                    |
