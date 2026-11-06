@@ -1,11 +1,14 @@
 [app]
 name = "mealie"
-version = "0.1.0"
+version = "1.0.0"
 description = "Mealie (self-hosted recipe manager / meal planner) packaged for Cloud in a Bottle with one-click SSO. The zone owner is auto-logged-in to the admin UI without ever seeing Mealie's native login form. Public recipe-share links remain reachable by anonymous visitors."
 authors = ["Andrew Laack <andrew@laack.co>"]
 
 [runtime.container]
 image = "Dockerfile"
+# Cloud in a Bottle pulls this signed prebuilt image (built from the release tag's commit by CI) instead of building
+# `image`. If you fork this app and change it, comment this line out so your instance builds `image` instead.
+prebuilt_image = "registry.cloudinabottle.org/bottled-mealie"
 # Auth-proxy port. Mealie itself runs on 127.0.0.1:9000; the proxy
 # listens on 8080 and is what the OpenHost router forwards to.
 port = 8080
