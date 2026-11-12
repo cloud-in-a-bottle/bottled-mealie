@@ -35,10 +35,10 @@
 # browser back with mealie.access_token cookie set.
 
 # Mealie publishes a multi-arch image at ghcr.io/mealie-recipes/mealie.
-# Pinning :v3.29.0 (latest stable as of 2026-10) for reproducible builds.
+# Pinning :v3.30.0 (latest stable as of 2026-11) for reproducible builds.
 # Bump as needed; the OpenHost-side glue is independent of Mealie's
 # minor versions.
-FROM ghcr.io/mealie-recipes/mealie:v3.29.0@sha256:78eb28b8776d0bad40c5e605c72b3f4f5976793e491558c7dcbdfc04c835d4bc
+FROM ghcr.io/mealie-recipes/mealie:v3.30.0@sha256:90f83da6f3ab0a421efc827118a556168573930105f13fa3321768f42163d784
 
 # Mealie's base image is python:3.14-slim, so apt + pip are available.
 # We only need python3 (already present) and the small extras for the
