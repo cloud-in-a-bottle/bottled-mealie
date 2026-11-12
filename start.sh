@@ -13,11 +13,13 @@
 # Mealie's upstream entry script (installed at /app/run.sh inside the
 # image; the source lives at docker/entry.sh in the mealie repo)
 # starts as root, calls `gosu 911 run.sh`, and execs `mealie`
-# (uvicorn) on $API_PORT bound to $HOST. We invoke that entrypoint
+# (uvicorn) on $API_PORT bound to $API_HOST. We invoke that entrypoint
 # verbatim — it handles uid drop, secrets loading, alembic migrations,
 # and the web server boot. The only customisation is API_PORT=9000
-# and HOST=127.0.0.1 so mealie listens on loopback, leaving the
-# auth-proxy the single externally-reachable listener.
+# and API_HOST=127.0.0.1 so mealie listens on loopback, leaving the
+# auth-proxy the single externally-reachable listener. (Mealie reads
+# API_HOST, not HOST; its default was 0.0.0.0 and is all of IPv4 and
+# IPv6 since v3.30.0.)
 
 set -euo pipefail
 
@@ -46,7 +48,7 @@ export DATA_DIR="$DATA_DIR"
 # links. The OpenHost router serves us at https://<app>.<zone>/.
 export BASE_URL="https://${APP_NAME}.${ZONE_DOMAIN}"
 export API_PORT=9000
-export HOST=127.0.0.1
+export API_HOST=127.0.0.1
 # Disable open self-signup. Mealie reads ALLOW_SIGNUP into
 # settings.ALLOW_SIGNUP at startup; the registration endpoint
 # (mealie/routes/users/registration.py) gates on that value, so this
